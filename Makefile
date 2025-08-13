@@ -64,24 +64,7 @@ $(TARGET): $(OBJECTS) | $(BINDIR)
 
 # Generate compile_commands.json using bear (if available), otherwise fallback
 compile_commands.json: $(SOURCES)
-	@if command -v bear > /dev/null; then \
-		bear --output $@ -- $(MAKE) $(TARGET); \
-	else \
-		echo "[" > $@.tmp; \
-		count=0; \
-		for src in $(SOURCES); do \
-			obj=$(OBJDIR)/$$(basename $$src .c).o; \
-			if [ $$count -gt 0 ]; then echo "," >> $@.tmp; fi; \
-			echo "  {" >> $@.tmp; \
-			echo "    \"directory\": \"$$(pwd)\"," >> $@.tmp; \
-			echo "    \"command\": \"$(CC) $(CFLAGS) $(CPPFLAGS) -c $$src -o $$obj\"," >> $@.tmp; \
-			echo "    \"file\": \"$$src\"" >> $@.tmp; \
-			echo "  }" >> $@.tmp; \
-			count=$$((count + 1)); \
-		done; \
-		echo "]" >> $@.tmp; \
-		mv $@.tmp $@; \
-	fi
+	bear --output $@ -- $(MAKE) $(TARGET); 
 
 # Build with compile_commands.json
 build: compile_commands.json $(TARGET)
