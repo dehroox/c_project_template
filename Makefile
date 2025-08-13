@@ -3,24 +3,26 @@ MAKEFLAGS += --no-print-directory -s
 # Compiler and flags
 CC := clang
 BASE_CFLAGS := -std=c23 -Wpedantic -fno-common \
-              -fno-plt -fno-semantic-interposition -fstrict-enums \
-              -fstrict-return -fvisibility=hidden -fstack-protector-strong \
-              -ftrivial-auto-var-init=pattern -fstrict-flex-arrays=3 -Wall -Wextra -Wdouble-promotion -Wformat=2 -Wnull-dereference \
-                -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations \
-                -Wshadow -Wundef -Wfloat-equal -Wcast-align -Wpointer-arith \
-                -Wwrite-strings -Wunused-parameter -Wpacked \
-                -Wpadded -Wredundant-decls -Wcast-qual \
-                -Wconversion -Wswitch-default -Wswitch-enum
-LDFLAGS :=
-CPPFLAGS :=
+               -fno-plt -fno-semantic-interposition -fstrict-enums \
+               -fstrict-return -fvisibility=hidden -fstack-protector-strong \
+               -ftrivial-auto-var-init=pattern -fstrict-flex-arrays=3 \
+               -Wall -Wextra -Wdouble-promotion -Wformat=2 -Wnull-dereference \
+               -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations \
+               -Wshadow -Wundef -Wfloat-equal -Wcast-align -Wpointer-arith \
+               -Wwrite-strings -Wunused-parameter -Wpacked \
+               -Wpadded -Wredundant-decls -Wcast-qual \
+               -Wconversion -Wswitch-default -Wswitch-enum
 
 # Directories
 SRCDIR := src
 INCDIR := include
+OBJDIR := obj
 BINDIR := bin
 
 # Files
 SOURCES := $(wildcard $(SRCDIR)/*.c)
+OBJECTS := $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
+DEPENDS := $(OBJECTS:.o=.d)
 
 # Default build type
 BUILD_TYPE ?= dev
@@ -28,7 +30,7 @@ BUILD_TYPE ?= dev
 # Conditionally define directories and flags based on BUILD_TYPE
 ifeq ($(BUILD_TYPE),debug)
 	TARGET := $(BINDIR)/main-debug.exe
-	CFLAGS := $(BASE_CFLAGS) -DDEBUG -O0
+	CFLAGS := $(BASE_CFLAGS) -DDEBUG -O0 -g
 else ifeq ($(BUILD_TYPE),release)
 	TARGET := $(BINDIR)/main-release.exe
 	CFLAGS := $(BASE_CFLAGS) -DNDEBUG -O3 -flto -pipe
@@ -37,71 +39,88 @@ else
 	CFLAGS := $(BASE_CFLAGS) -O2
 endif
 
+CPPFLAGS += -I$(INCDIR)
+LDFLAGS +=
+
 # Default target
-.PHONY: all clean build debug release install help distclean tags print-vars
+.PHONY: all clean build debug release install help distclean print-vars run
 
 all: build
 
-# Create bin directory if it doesn't exist
-$(BINDIR):
+# Create directories if they don't exist
+$(OBJDIR) $(BINDIR):
 	@mkdir -p $@
 
-# Link executable directly from sources
-$(TARGET): $(SOURCES) | $(BINDIR)
-	$(CC) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) $(SOURCES) -o $@
+# Include auto-generated dependencies
+-include $(DEPENDS)
 
-# Generate compile_commands.json for clangd
+# Compile source files into object files
+$(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
+	$(CC) $(CFLAGS) $(CPPFLAGS) -MMD -MP -c $< -o $@
+
+# Link executable from object files
+$(TARGET): $(OBJECTS) | $(BINDIR)
+	$(CC) $(OBJECTS) $(LDFLAGS) -o $@
+
+# Generate compile_commands.json using bear (if available), otherwise fallback
 compile_commands.json: $(SOURCES)
-	@echo "[" > $@.tmp
-	@count=0; \
-	for src in $(SOURCES); do \
-		if [ $$count -gt 0 ]; then \
-			echo "," >> $@.tmp; \
-		fi; \
-		echo "  {" >> $@.tmp; \
-		echo "	\"directory\": \"$$(pwd)\"," >> $@.tmp; \
-		echo "	\"command\": \"$(CC) $(CFLAGS) $(CPPFLAGS) -c $$src -o /dev/null\"," >> $@.tmp; \
-		echo "	\"file\": \"$$src\"" >> $@.tmp; \
-		echo "  }" >> $@.tmp; \
-		count=$$((count + 1)); \
-	done
-	@echo "]" >> $@.tmp
-	@mv $@.tmp $@
+	@if command -v bear > /dev/null; then \
+		bear --output $@ -- $(MAKE) $(TARGET); \
+	else \
+		echo "[" > $@.tmp; \
+		count=0; \
+		for src in $(SOURCES); do \
+			obj=$(OBJDIR)/$$(basename $$src .c).o; \
+			if [ $$count -gt 0 ]; then echo "," >> $@.tmp; fi; \
+			echo "  {" >> $@.tmp; \
+			echo "    \"directory\": \"$$(pwd)\"," >> $@.tmp; \
+			echo "    \"command\": \"$(CC) $(CFLAGS) $(CPPFLAGS) -c $$src -o $$obj\"," >> $@.tmp; \
+			echo "    \"file\": \"$$src\"" >> $@.tmp; \
+			echo "  }" >> $@.tmp; \
+			count=$$((count + 1)); \
+		done; \
+		echo "]" >> $@.tmp; \
+		mv $@.tmp $@; \
+	fi
 
 # Build with compile_commands.json
 build: compile_commands.json $(TARGET)
 
 # Clean build files
 clean:
-	@rm -rf $(BINDIR) compile_commands.json
+	@rm -rf $(OBJDIR) $(BINDIR) compile_commands.json
 
 # Very clean - remove all generated files
 distclean: clean
-	@rm -f tags cscope.*
+	@rm -f cscope.*
 
-# Generate tags for navigation (optional)
-tags: $(SOURCES)
-	@ctags -R $(SRCDIR) $(INCDIR)
-
+# Run the built executable
 run: $(TARGET)
 	@./$(TARGET)
+
+# Install binary (example)
+install: $(TARGET)
+	@echo "Installing $(TARGET) to /usr/local/bin/"
+	@cp $(TARGET) /usr/local/bin/
 
 # Help target
 help:
 	@echo "Available targets:"
-	@echo "  all	   - Build default (dev)"
-	@echo "  build	 - Build with compile_commands.json"
-	@echo "  debug	 - Build with debug flags"
+	@echo "  all       - Build default (dev)"
+	@echo "  build     - Build with compile_commands.json"
+	@echo "  debug     - Build with debug flags"
 	@echo "  release   - Build with optimization flags"
-	@echo "  clean	 - Remove build files"
+	@echo "  clean     - Remove build files"
 	@echo "  distclean - Remove all generated files"
-	@echo "  tags	  - Generate ctags file"
-	@echo "  help	  - Show this help"
+	@echo "  run       - Run the built executable"
+	@echo "  install   - Install binary to system"
+	@echo "  help      - Show this help"
 
 # Print variables for debugging
 print-vars:
 	@echo "BUILD_TYPE = $(BUILD_TYPE)"
 	@echo "SOURCES = $(SOURCES)"
+	@echo "OBJECTS = $(OBJECTS)"
 	@echo "CFLAGS = $(CFLAGS)"
 	@echo "LDFLAGS = $(LDFLAGS)"
 	@echo "CPPFLAGS = $(CPPFLAGS)"
